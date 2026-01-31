@@ -1,0 +1,98 @@
+version: '3.8'
+networks:
+  ocr-network:
+    driver: bridge
+
+services:
+  # --- DATABASE LAYER ---
+  db:
+    image: ankane/pgvector:latest # Postgres 16 + pgvector
+    container_name: ocr_gateway_db
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: REDACTED
+      POSTGRES_DB: ocr_gateway
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d ocr_gateway"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - ocr-network
+
+  # --- MESSAGE BROKER ---
+  rabbitmq:
+    image: rabbitmq:3.12-management
+    container_name: ocr_gateway_mq
+    ports:
+      - "5672:5672"   # AMQP
+      - "15672:15672" # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: REDACTED_PASS
+      RABBITMQ_DEFAULT_PASS: REDACTED_PASS
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    networks:
+      - ocr-network
+
+  # --- CACHE & DEDUPLICATION ---
+  redis:
+    image: redis:7-alpine
+    container_name: ocr_gateway_redis
+    ports:
+      - "6379:6379"
+    networks:
+      - ocr-network
+
+  # --- OBSERVABILITY (LANGFUSE) ---
+  langfuse-db:
+    image: postgres:16
+    container_name: langfuse_db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: REDACTED
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_pgdata:/var/lib/postgresql/data
+    networks:
+      - ocr-network
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: langfuse_server
+    depends_on:
+      - langfuse-db
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://langfuse:REDACTED@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=REDACTED
+      - SALT=REDACTED
+      - NEXTAUTH_URL=http://localhost:3000
+      - TELEMETRY_ENABLED=false # Нам нужен закрытый контур
+    networks:
+      - ocr-network
+
+  minio:
+    image: minio/minio
+    container_name: ocr-minio
+    ports:
+      - "9000:9000"       # API
+      - "9001:9001"       # Console UI
+    environment:
+      MINIO_ROOT_USER: admin
+      MINIO_ROOT_PASSWORD: REDACTED
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+
+volumes:
+  pgdata:
+  rabbitdata:
+  langfuse_pgdata:
+  minio_data:

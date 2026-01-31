@@ -1,0 +1,50 @@
+spring:
+  application:
+    name: ocr-gateway
+  # --- PostgreSQL Configuration ---
+  datasource:
+    url: jdbc:postgresql://localhost:5432/ocr_gateway
+    username: admin
+    password: REDACTED
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update # Или validate, none, create
+    show-sql: true
+    properties:
+      hibernate.format_sql: true
+
+  # --- RabbitMQ Configuration ---
+  rabbitmq:
+    host: localhost
+    port: 5672
+    username: REDACTED_PASS
+    password: REDACTED_PASS
+    exchange: ocr.exchange
+    routing-key: ocr.process
+    queues:
+      incoming: ocr.incoming.queue
+
+  # --- Redis Configuration ---
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      # Пароль в композе не задан, эту строку можно оставить пустой или удалить
+      # password: your_redis_password
+
+  minio:
+    endpoint: http://localhost:9000
+    access-key: admin
+    secret-key: REDACTED
+    bucket: ocr-artifacts
+
+# --- Actuator/Healthcheck Configuration ---
+management:
+  endpoints:
+    web:
+      exposure:
+        include: "health, info, metrics"
+  endpoint:
+    health:
+      show-details: "always"
