@@ -1,10 +1,7 @@
 package ru.petrov.ocr_gateway.service;
 
 import lombok.RequiredArgsConstructor;
-import lombok.Value;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.AmqpException;
-import org.springframework.resilience.annotation.Retryable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import ru.petrov.ocr_gateway.exception.TaskDispatchException;
@@ -14,7 +11,6 @@ import ru.petrov.ocr_gateway.model.TaskMessageDto;
 import ru.petrov.ocr_gateway.model.TaskStatus;
 import ru.petrov.ocr_gateway.repository.TaskRepository;
 
-import javax.naming.ServiceUnavailableException;
 import java.util.Map;
 
 @Service
@@ -25,6 +21,7 @@ public class TaskServiceImpl implements TaskService {
     private final TaskRepository taskRepository;
     private final TaskPublisher taskPublisher;
 
+    // TODO: Интегрировать систему профилей для заполнения дефолтных опций
 
     @Override
     public TaskEntity createAndDispatch(MultipartFile file, Map<String, Object> options) {

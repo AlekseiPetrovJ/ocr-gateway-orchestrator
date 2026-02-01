@@ -108,6 +108,15 @@
             <version>8.6.0</version>
             <scope>compile</scope>
         </dependency>
+        <!-- OkHttp добавлен вручную, так как Spring Boot 4+ не управляет его версией,
+     а библиотека io.minio:minio:8.6.0 требует его для работы -->
+        <!-- Source: https://mvnrepository.com/artifact/com.squareup.okhttp3/okhttp -->
+        <dependency>
+            <groupId>com.squareup.okhttp3</groupId>
+            <artifactId>okhttp</artifactId>
+            <version>4.12.0</version>
+            <scope>compile</scope>
+        </dependency>
 	</dependencies>
 
 	<build>
