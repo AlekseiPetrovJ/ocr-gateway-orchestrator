@@ -5,7 +5,7 @@ spring:
   datasource:
     url: jdbc:postgresql://localhost:5432/ocr_gateway
     username: admin
-    password: REDACTED
+    password: ${DB_PASSWORD}
     driver-class-name: org.postgresql.Driver
   jpa:
     hibernate:
@@ -18,8 +18,8 @@ spring:
   rabbitmq:
     host: localhost
     port: 5672
-    username: REDACTED_PASS
-    password: REDACTED_PASS
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASS}
 
   # --- Redis Configuration ---
   data:
@@ -34,7 +34,7 @@ app:
   minio:
     endpoint: http://localhost:9000
     access-key: admin
-    secret-key: REDACTED
+    secret-key: ${MINIO_ROOT_PASSWORD}
     bucket: ocr-artifacts
   rabbitmq:
     exchange: ocr.exchange

@@ -10,7 +10,7 @@ services:
     container_name: ocr_gateway_db
     environment:
       POSTGRES_USER: admin
-      POSTGRES_PASSWORD: REDACTED
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ocr_gateway
     ports:
       - "5432:5432"
@@ -32,8 +32,8 @@ services:
       - "5672:5672"   # AMQP
       - "15672:15672" # Management UI
     environment:
-      RABBITMQ_DEFAULT_USER: REDACTED_PASS
-      RABBITMQ_DEFAULT_PASS: REDACTED_PASS
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
     volumes:
       - rabbitdata:/var/lib/rabbitmq
     networks:
@@ -52,9 +52,14 @@ services:
   langfuse-db:
     image: postgres:16
     container_name: langfuse_db
+    healthcheck: # <-- Добавь это, чтобы langfuse-server знал, когда база готова
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
     environment:
       POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: REDACTED
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
       POSTGRES_DB: langfuse
     volumes:
       - langfuse_pgdata:/var/lib/postgresql/data
@@ -65,14 +70,15 @@ services:
     image: langfuse/langfuse:2
     container_name: langfuse_server
     depends_on:
-      - langfuse-db
+      langfuse-db:
+        condition: service_healthy
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://langfuse:REDACTED@langfuse-db:5432/langfuse
-      - NEXTAUTH_SECRET=REDACTED
-      - SALT=REDACTED
+      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/langfuse
+      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET_KEY}
+      - SALT=${my_salt}
       - NEXTAUTH_URL=http://localhost:3000
       - TELEMETRY_ENABLED=false # Нам нужен закрытый контур
     networks:
@@ -86,10 +92,12 @@ services:
       - "9001:9001"       # Console UI
     environment:
       MINIO_ROOT_USER: admin
-      MINIO_ROOT_PASSWORD: REDACTED
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
+    networks:
+      - ocr-network
 
 volumes:
   pgdata:
