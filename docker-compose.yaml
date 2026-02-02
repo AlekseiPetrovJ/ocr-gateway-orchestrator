@@ -52,7 +52,7 @@ services:
   langfuse-db:
     image: postgres:16
     container_name: langfuse_db
-    healthcheck: # <-- Добавь это, чтобы langfuse-server знал, когда база готова
+    healthcheck:
       test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
       interval: 5s
       timeout: 5s
