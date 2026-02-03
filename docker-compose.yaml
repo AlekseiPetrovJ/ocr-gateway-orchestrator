@@ -78,7 +78,7 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/langfuse
       - NEXTAUTH_SECRET=${NEXTAUTH_SECRET_KEY}
-      - SALT=${my_salt}
+      - SALT=${AUTH_SALT}
       - NEXTAUTH_URL=http://localhost:3000
       - TELEMETRY_ENABLED=false # Нам нужен закрытый контур
     networks:

@@ -41,6 +41,10 @@ app:
     routing-key: ocr.key
     queues:
       incoming: ocr.tasks.queue
+  langfuse:
+    host: http://localhost:3000
+    public-key: ${LANGFUSE_PK}
+    secret-key: ${LANGFUSE_SK}
 
 # --- Actuator/Healthcheck Configuration ---
 management:

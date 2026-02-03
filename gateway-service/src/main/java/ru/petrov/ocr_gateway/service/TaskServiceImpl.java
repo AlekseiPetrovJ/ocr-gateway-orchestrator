@@ -12,6 +12,7 @@ import ru.petrov.ocr_gateway.model.TaskStatus;
 import ru.petrov.ocr_gateway.repository.TaskRepository;
 
 import java.util.Map;
+import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
@@ -20,17 +21,25 @@ public class TaskServiceImpl implements TaskService {
     private final StorageService storageService;
     private final TaskRepository taskRepository;
     private final TaskPublisher taskPublisher;
+    private final AppTracer tracer;
 
     // TODO: Интегрировать систему профилей для заполнения дефолтных опций
 
     @Override
     public TaskEntity createAndDispatch(MultipartFile file, Map<String, Object> options) {
+        String traceId = UUID.randomUUID().toString();
 
         // 1. Приземляем файл (IO-bound, вне транзакции)
         FileEntity fileEntity = storageService.uploadFile(file);
 
+        // Затем логируем в Langfuse
+        try (var ignored = tracer.startSpan(traceId, "minio-upload")) {
+            tracer.startTaskTrace(traceId, file.getOriginalFilename(), fileEntity.getSha256Hash());
+        }
+
         // 2. Создаем таску в БД (Атомарный save() создаст свою мини-транзакцию)
         TaskEntity task = new TaskEntity();
+        task.setTraceId(traceId);
         task.setFile(fileEntity);
         task.setStatus(TaskStatus.PENDING);
         task.setConfig(options);
@@ -40,6 +49,7 @@ public class TaskServiceImpl implements TaskService {
         TaskMessageDto message = new TaskMessageDto(
                 savedTask.getId(),
                 fileEntity.getStoragePath(),
+                traceId,
                 fileEntity.getSha256Hash(),
                 savedTask.getConfig()
         );
