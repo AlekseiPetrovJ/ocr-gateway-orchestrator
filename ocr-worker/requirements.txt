@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+python-multipart
+docling
+docling-core
+easyocr
+pika
+minio
+langfuse
+pillow
+pydantic
+pydantic-settings
+ocrmypdf
