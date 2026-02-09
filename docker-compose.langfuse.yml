@@ -1,6 +1,15 @@
+# ==============================================================================
+# ВНИМАНИЕ: ЭТОТ КОНФИГ ВЫСТРАДАН КРОВЬЮ И 4 ДНЯМИ ОТЛАДКИ.
+# 1. НЕ УДАЛЯЙ ПУСТЫЕ ПЕРЕМЕННЫЕ (например, EMAIL_FROM_ADDRESS: "", вообще никакие не удаляй) — Langfuse
+#    может упасть при их отсутствии в окружении.
+# 2. ПОРЯДОК depends_on И healthcheck КРИТИЧЕН — сервисы v3 очень капризны.
+# 3. ВСЕ ИЗМЕНЕНИЯ ПАРОЛЕЙ ДЕЛАТЬ ТОЛЬКО В .env ФАЙЛЕ.
+# 4. ПРИ СМЕНЕ ПАРОЛЕЙ БАЗ ОБЯЗАТЕЛЬНО: docker compose down -v
+# ==============================================================================
+
 services:
   langfuse-worker:
-    image: langfuse/langfuse-worker:3
+    image: langfuse/langfuse-worker:3.150.0
     container_name: langfuse_worker
     restart: always
     depends_on:
@@ -49,7 +58,7 @@ services:
       - ocr-network
 
   langfuse-web:
-    image: langfuse/langfuse:3
+    image: langfuse/langfuse:3.150.0
     container_name: langfuse_web
     restart: always
     ports:
@@ -97,7 +106,7 @@ services:
       - ocr-network
 
   langfuse-db:
-    image: postgres:17
+    image: postgres:17.7
     container_name: langfuse_db
     environment:
       POSTGRES_USER: langfuse
@@ -114,7 +123,7 @@ services:
       - ocr-network
 
   clickhouse:
-    image: clickhouse/clickhouse-server
+    image: clickhouse/clickhouse-server:26.1
     container_name: langfuse_clickhouse
     environment:
       CLICKHOUSE_USER: ${CLICKHOUSE_USER}
@@ -129,7 +138,7 @@ services:
       - ocr-network
 
   redis-langfuse:
-    image: redis:7
+    image: redis:7.4.7
     container_name: langfuse_redis_cache
     command: --requirepass ${REDIS_AUTH_LANGFUSE}
     healthcheck:
