@@ -1,12 +1,17 @@
 version: '3.8'
+
+include:
+  - path: docker-compose.langfuse.yml
+    env_file: .env
+
 networks:
   ocr-network:
+    name: ocr-network
     driver: bridge
 
 services:
-  # --- DATABASE LAYER ---
   db:
-    image: ankane/pgvector:latest # Postgres 16 + pgvector
+    image: ankane/pgvector:latest
     container_name: ocr_gateway_db
     environment:
       POSTGRES_USER: admin
@@ -20,11 +25,9 @@ services:
       test: ["CMD-SHELL", "pg_isready -U admin -d ocr_gateway"]
       interval: 5s
       timeout: 5s
-      retries: 5
     networks:
       - ocr-network
 
-  # --- MESSAGE BROKER ---
   rabbitmq:
     image: rabbitmq:3.12-management
     container_name: ocr_gateway_mq
@@ -39,48 +42,9 @@ services:
     networks:
       - ocr-network
 
-  # --- CACHE & DEDUPLICATION ---
   redis:
     image: redis:7-alpine
     container_name: ocr_gateway_redis
-    ports:
-      - "6379:6379"
-    networks:
-      - ocr-network
-
-  # --- OBSERVABILITY (LANGFUSE) ---
-  langfuse-db:
-    image: postgres:16
-    container_name: langfuse_db
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    environment:
-      POSTGRES_USER: langfuse
-      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
-      POSTGRES_DB: langfuse
-    volumes:
-      - langfuse_pgdata:/var/lib/postgresql/data
-    networks:
-      - ocr-network
-
-  langfuse:
-    image: langfuse/langfuse:2
-    container_name: langfuse_server
-    depends_on:
-      langfuse-db:
-        condition: service_healthy
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/langfuse
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET_KEY}
-      - SALT=${AUTH_SALT}
-      - NEXTAUTH_URL=http://localhost:3000
-      - TELEMETRY_ENABLED=false # Нам нужен закрытый контур
     networks:
       - ocr-network
 
@@ -88,14 +52,18 @@ services:
     image: minio/minio
     container_name: ocr-minio
     ports:
-      - "9000:9000"       # API
-      - "9001:9001"       # Console UI
+      - "9005:9000"
+      - "9001:9001"
     environment:
       MINIO_ROOT_USER: admin
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9000/minio/health/live || exit 1"]
+      interval: 5s
+      timeout: 5s
     volumes:
       - minio_data:/data
-    command: server /data --console-address ":9001"
     networks:
       - ocr-network
 

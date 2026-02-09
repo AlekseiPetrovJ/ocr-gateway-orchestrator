@@ -1,0 +1,141 @@
+services:
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: langfuse_worker
+    restart: always
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis-langfuse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      # --- ПЕРЕМЕННЫЕ ИЗ ЭТАЛОНА ---
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      DATABASE_URL: "postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/postgres"
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://clickhouse:9000"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_USE_AZURE_BLOB: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "auto"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "admin"
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://ocr-minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_EVENT_UPLOAD_PREFIX: "events/"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: "langfuse"
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: "auto"
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: "admin"
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://ocr-minio:9000"
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_PREFIX: "media/"
+      LANGFUSE_S3_BATCH_EXPORT_ENABLED: "false"
+      LANGFUSE_INGESTION_QUEUE_DELAY_MS: ""
+      LANGFUSE_INGESTION_CLICKHOUSE_WRITE_INTERVAL_MS: ""
+      REDIS_HOST: "redis-langfuse"
+      REDIS_PORT: "6379"
+      REDIS_AUTH: "${REDIS_AUTH_LANGFUSE}"
+      REDIS_TLS_ENABLED: "false"
+      EMAIL_FROM_ADDRESS: ""
+      SMTP_CONNECTION_URL: ""
+    networks:
+      - ocr-network
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: langfuse_web
+    restart: always
+    ports:
+      - "3000:3000"
+    depends_on:
+      langfuse-db: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      redis-langfuse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      # ПОВТОР ВСЕХ ПЕРЕМЕННЫХ WORKER (как требует эталон)
+      NEXTAUTH_URL: ${NEXTAUTH_URL}
+      DATABASE_URL: "postgresql://langfuse:${LANGFUSE_DB_PASSWORD}@langfuse-db:5432/postgres"
+      SALT: ${SALT}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+      TELEMETRY_ENABLED: ${TELEMETRY_ENABLED:-false}
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: ${LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES:-false}
+      CLICKHOUSE_MIGRATION_URL: "clickhouse://clickhouse:9000"
+      CLICKHOUSE_URL: "http://clickhouse:8123"
+      CLICKHOUSE_USER: "${CLICKHOUSE_USER}"
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_CLUSTER_ENABLED: "false"
+      LANGFUSE_S3_EVENT_UPLOAD_BUCKET: "langfuse"
+      LANGFUSE_S3_EVENT_UPLOAD_REGION: "auto"
+      LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: "admin"
+      LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: "http://ocr-minio:9000"
+      LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+      LANGFUSE_S3_MEDIA_UPLOAD_BUCKET: "langfuse"
+      LANGFUSE_S3_MEDIA_UPLOAD_REGION: "auto"
+      LANGFUSE_S3_MEDIA_UPLOAD_ACCESS_KEY_ID: "admin"
+      LANGFUSE_S3_MEDIA_UPLOAD_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD}"
+      LANGFUSE_S3_MEDIA_UPLOAD_ENDPOINT: "http://ocr-minio:9000"
+      LANGFUSE_S3_MEDIA_UPLOAD_FORCE_PATH_STYLE: "true"
+      REDIS_HOST: "redis-langfuse"
+      REDIS_PORT: "6379"
+      REDIS_AUTH: "${REDIS_AUTH_LANGFUSE}"
+      # СПЕЦИФИЧНЫЕ ДЛЯ WEB
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET}
+      LANGFUSE_INIT_ORG_ID: ""
+      LANGFUSE_INIT_PROJECT_ID: ""
+      LANGFUSE_INIT_USER_EMAIL: ""
+      LANGFUSE_INIT_USER_PASSWORD: ""
+    networks:
+      - ocr-network
+
+  langfuse-db:
+    image: postgres:17
+    container_name: langfuse_db
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD}
+      POSTGRES_DB: postgres
+    volumes:
+      - langfuse_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - ocr-network
+
+  clickhouse:
+    image: clickhouse/clickhouse-server
+    container_name: langfuse_clickhouse
+    environment:
+      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
+      CLICKHOUSE_PASSWORD: "${CLICKHOUSE_PASSWORD}"
+      CLICKHOUSE_DB: default
+    healthcheck:
+      test: wget --no-verbose --tries=1 --spider http://localhost:8123/ping || exit 1
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks:
+      - ocr-network
+
+  redis-langfuse:
+    image: redis:7
+    container_name: langfuse_redis_cache
+    command: --requirepass ${REDIS_AUTH_LANGFUSE}
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_AUTH_LANGFUSE}", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 10
+    networks:
+      - ocr-network
