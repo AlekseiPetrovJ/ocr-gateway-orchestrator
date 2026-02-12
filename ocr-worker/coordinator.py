@@ -1,85 +1,227 @@
-import os
 import json
-import time
 import shutil
+import logging
+import subprocess
+import time
+import os
 import pika
+import hashlib
 from pathlib import Path
 from minio import Minio
-from docling_parser import DoclingParser  # Твой класс
+from langfuse import Langfuse
+from unittest.mock import MagicMock
 
-# --- Конфигурация из ENV (стандарт Highload) ---
-RABBIT_URL = os.getenv("RABBIT_URL", "amqp://guest:guest@localhost/")
-MINIO_URL = os.getenv("MINIO_URL", "localhost:9000")
-MINIO_ACCESS = os.getenv("MINIO_ACCESS", "minioadmin")
-MINIO_SECRET = os.getenv("MINIO_SECRET", "minioadmin")
+from docling_parser import DoclingParser
+from preprocessor import run_cleanup, run_normalization
+from processing_profile import ProcessingProfile
+from config import settings
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("Coordinator")
+
+def calculate_sha256(file_path):
+    """Расчет SHA-256 для проверки целостности файла"""
+    sha256_hash = hashlib.sha256()
+    with open(file_path, "rb") as f:
+        for byte_block in iter(lambda: f.read(4096), b""):
+            sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
 
 class Coordinator:
-    def __init__(self):
-        # 1. Инициализируем парсер ОДИН раз (модели грузятся в RAM)
-        self.parser = DoclingParser(ocr_engine="easy")
-        
-        # 2. Настройка S3
-        self.s3 = Minio(MINIO_URL, access_key=MINIO_ACCESS, secret_key=MINIO_SECRET, secure=False)
-        
-        # 3. Настройка RabbitMQ
-        params = pika.URLParameters(RABBIT_URL)
+    def __init__(self, parser_instance: DoclingParser):
+        """Инициализация синглтонов при старте контейнера"""
+        self.parser = parser_instance
+        # Инициализация Langfuse
+        self.langfuse = Langfuse(
+            public_key=settings.lf_public_key,
+            secret_key=settings.lf_secret_key,
+            host=settings.lf_host
+        )
+
+        # S3 Хранилище
+        self.s3 = Minio(settings.s3_endpoint, settings.s3_access, settings.s3_secret, secure=False)
+
+        # Настройка RabbitMQ
+        params = pika.URLParameters(settings.rabbit_url)
+        params.heartbeat = settings.rmq_heartbeat
         self.connection = pika.BlockingConnection(params)
         self.channel = self.connection.channel()
-        self.channel.queue_declare(queue="pdf_tasks", durable=True)
-        self.channel.basic_qos(prefetch_count=1) # Берем строго по 1 задаче
 
-    def upload_results(self, task_id, local_dir):
-        """Загрузка всей папки с результатами в MinIO"""
-        for file_path in Path(local_dir).rglob("*"):
-            if file_path.is_file():
-                s3_path = f"results/{task_id}/{file_path.relative_to(local_dir)}"
-                self.s3.fput_object("documents", s3_path, str(file_path))
+        # Объявление очередей
+        self.channel.queue_declare(queue=settings.queue_input, durable=True)
+        self.channel.queue_declare(queue=settings.queue_output, durable=True)
+        self.channel.basic_qos(prefetch_count=1)
 
-    def process_task(self, ch, method, properties, body):
-        """Callback при получении задачи из RabbitMQ"""
-        task = json.loads(body)
-        task_id = task.get("task_id")
-        input_s3_path = task.get("input_path") # путь к PDF в MinIO
-        
-        tmp_dir = Path(f"/tmp/{task_id}")
-        input_pdf = tmp_dir / "input.pdf"
-        output_dir = tmp_dir / "output"
+    def _send_response(self, task_id, status, extra=None):
+        """Отправка тикета-ответа (Event) обратно в шину"""
+        payload = {
+            "task_id": task_id,
+            "status": status,
+            "worker_node": os.getenv("HOSTNAME", "node-1"),
+            "timestamp": int(time.time())
+        }
+        if extra: payload.update(extra)
+
+        self.channel.basic_publish(
+            exchange='',
+            routing_key=settings.queue_output,
+            body=json.dumps(payload),
+            properties=pika.BasicProperties(delivery_mode=2, content_type='application/json')
+        )
+
+    def _execute_pipeline(self, profile: ProcessingProfile, input_pdf: Path, out_dir: Path, trace):
+        """Оркестрация цепочки. Каждый этап — отдельный Span в Langfuse."""
+        current_file = input_pdf
+
+        # 1. Очистка (Ghostscript)
+        if "clean" in profile.value:
+            span = trace.span(name="cleanup_gs")
+            try:
+                logger.info(f"[GS] Cleanup started: {current_file.name}")
+                next_file = input_pdf.parent / "1_cleaned.pdf"
+                # Вызов метода очистки (внутри subprocess.run)
+                run_cleanup(current_file, next_file)
+                current_file = next_file
+                span.update(metadata={"output": "1_cleaned.pdf"})
+            finally:
+                span.end()
+
+        # 2. Нормализация (OCRmyPDF)
+        if "norm" in profile.value:
+            span = trace.span(name="normalization_ocr")
+            try:
+                logger.info(f"[OCR] Normalization started: {current_file.name}")
+                next_file = input_pdf.parent / "2_normalized.pdf"
+                run_normalization(current_file, next_file)
+                current_file = next_file
+                span.update(metadata={"output": "2_normalized.pdf"})
+            finally:
+                span.end()
+
+        # 3: Docling
+        span = trace.span(name="parsing_docling")
+        try:
+            logger.info(f"[Docling] Final Parse: {current_file.name}")
+            # Метод внутри docling_parser.py
+            self.parser.process(current_file, out_dir)
+            span.update(metadata={"engine": "docling_v2_core"})
+        finally:
+            span.end()
+
+    def on_message(self, ch, method, properties, body):
+        """Точка входа: обработка сообщения из RabbitMQ"""
+        data = json.loads(body)
+
+        task_id = data.get('taskId')
+        trace_id = data.get('traceId')
+        s3_path = data.get('storagePath')
+        file_hash = data.get('sha256')
+        profile_str = data.get('config', {}).get('profile', 'parse')
+        profile = ProcessingProfile(profile_str)
+        # --- Observability Fail-Safe ---
+        # Подключаемся к Root Trace из Java по trace_id.
+        # ВНИМАНИЕ: Ошибки мониторинга не должны останавливать конвейер (Fail-Safe).
+        try:
+            # Проверяем наличие метода trace, чтобы не упасть при плохой авторизации
+            if hasattr(self.langfuse, 'trace'):
+                trace = self.langfuse.trace(id=trace_id, name=f"WorkerProcess:{profile.value}")
+            else:
+                trace = MagicMock()
+        except Exception as e:
+            logger.warning(f"Langfuse failed: {e}")
+            trace = MagicMock()
+
+        # Контекст файловой системы для задачи
+        work_dir = Path(f"/tmp/{task_id}")
+        raw_pdf = work_dir / "input.pdf"
+        results_dir = work_dir / "results"
+        tar_path = work_dir / f"{task_id}.tar"
 
         try:
-            print(f"📥 Задача {task_id}: начинаю обработку...")
-            tmp_dir.mkdir(parents=True, exist_ok=True)
+            work_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"🚀 Задача {task_id} получена. Профиль: {profile.value}")
 
-            # Этап 1: Скачивание
-            self.s3.fget_object("documents", input_s3_path, str(input_pdf))
+            # Проверка наличия результата в S3 (Идемпотентность)
+            # Если результат уже в S3, не тратим ресурсы CPU/GPU
+            result_filename = f"{task_id}.tar"
+            try:
+                self.s3.stat_object(settings.bucket_proc, result_filename)
+                logger.info(f"Результат {task_id} уже существует. Пропускаем OCR.")
 
-            # Этап 2: Очистка (здесь можно вызвать GS-скрипт)
-            # clean_pdf = self.run_cleanup(input_pdf) 
+                # В v2.x создаем спан и сразу закрываем его
+                span = trace.span(name="idempotency_hit")
+                self._send_response(task_id, "SUCCESS", {"s3Output": result_filename})
+                span.end()
 
-            # Этап 3: Парсинг (вызов модуля)
-            self.parser.process(input_pdf, output_dir)
+                self.langfuse.flush() # Выталкиваем трейс перед выходом
+                ch.basic_ack(delivery_tag=method.delivery_tag)
+                return
+            except:
+                pass # Результата нет, работаем
 
-            # Этап 4: Загрузка результатов
-            self.upload_results(task_id, output_dir)
+            # 1. DOWNLOAD
+            span_dl = trace.span(name="io_s3_download")
+            self.s3.fget_object(settings.bucket_raw, s3_path, str(raw_pdf))
+            span_dl.end()
 
-            # Подтверждаем успех
+            # 2. INTEGRITY
+            span_hash = trace.span(name="integrity_hash_check")
+            actual_hash = calculate_sha256(raw_pdf)
+            if file_hash and actual_hash != file_hash:
+                raise Exception(f"Integrity error: expected {file_hash}, but got {actual_hash}")
+            logger.info(f"🛡️ Hash verified: {actual_hash}")
+            span_hash.end()
+
+            # 3. PIPELINE (GS -> OCR -> Docling)
+            # Внутри создаются спаны cleanup_gs, normalization_ocr, parsing_docling
+            self._execute_pipeline(profile, raw_pdf, results_dir, trace)
+
+            # 4. PACKAGING (TAR без сжатия)
+            span_pack = trace.span(name="io_pack_tar")
+            subprocess.run(["tar", "-cf", str(tar_path), "-C", str(results_dir), "."], check=True)
+            result_hash = calculate_sha256(tar_path)
+            span_pack.end()
+
+            # 5. UPLOAD
+            span_up = trace.span(name="io_s3_upload")
+            self.s3.fput_object(settings.bucket_proc, result_filename, str(tar_path))
+            span_up.end()
+
+            # 6. RESPONSE
+            self._send_response(task_id, "SUCCESS", {
+                "s3Output": result_filename,
+                "sha256": result_hash
+            })
+
+            self.langfuse.flush() # Финальный сброс трейсов
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            print(f"✅ Задача {task_id} выполнена успешно.")
+            logger.info(f"✅ Задача {task_id} завершена успешно.")
 
         except Exception as e:
-            print(f"❌ Ошибка в задаче {task_id}: {e}")
-            # Отклоняем задачу, не возвращая в очередь (чтобы не зациклить ошибку)
+            logger.error(f"❌ Ошибка задачи {task_id}: {str(e)}")
+            trace.update(status_message=str(e), level="ERROR")
+
+            # Сообщаем внешней системе об ошибке
+            self._send_response(task_id, "ERROR", {"error": str(e)})
+            self.langfuse.flush()
+            # Отправляем в DLQ (requeue=False)
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
-        
+
         finally:
-            # Очистка временных файлов (Highload-гигиена)
-            if tmp_dir.exists():
-                shutil.rmtree(tmp_dir)
+            # Очистка диска
+            shutil.rmtree(work_dir, ignore_errors=True)
 
     def start(self):
-        print("🚀 Координатор запущен и ждет задач...")
-        self.channel.basic_consume(queue="pdf_tasks", on_message_callback=self.process_task)
+        """Бесконечный цикл прослушивания очереди"""
+        logger.info(f"Воркер запущен. Слушаю очередь: {settings.queue_input}")
+        self.channel.basic_consume(queue=settings.queue_input, on_message_callback=self.on_message)
         self.channel.start_consuming()
 
 if __name__ == "__main__":
-    coord = Coordinator()
-    coord.start()
+    # Загружаем нейросети один раз при старте контейнера (Bean Initialization)
+    # Это позволяет экономить время на каждой задаче
+    shared_parser = DoclingParser()
+
+    # Запускаем координатор
+    worker = Coordinator(parser_instance=shared_parser)
+    worker.start()
