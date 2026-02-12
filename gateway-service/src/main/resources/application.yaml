@@ -28,11 +28,16 @@ spring:
       port: 6379
       # Пароль в композе не задан, эту строку можно оставить пустой или удалить
       # password: your_redis_password
-
+  # Лимит на один файл (ставим 50 Мб)
+  servlet:
+    multipart:
+      max-file-size: 50MB
+  # Лимит на весь запрос целиком
+      max-request-size: 50MB
 
 app:
   minio:
-    endpoint: http://localhost:9000
+    endpoint: http://localhost:9005
     access-key: admin
     secret-key: ${MINIO_ROOT_PASSWORD}
     bucket: ocr-artifacts
@@ -55,3 +60,8 @@ management:
   endpoint:
     health:
       show-details: "always"
+#logging:
+#  level:
+#    com.langfuse: DEBUG
+#    org.apache.http: DEBUG
+#    okhttp3: DEBUG
