@@ -22,7 +22,7 @@ public class TaskEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "file_id", nullable = false)
-    private FileEntity file;
+    private FileEntity sourceFile;
 
     @Enumerated(EnumType.STRING)
     private TaskStatus status = TaskStatus.PENDING;
@@ -38,7 +38,9 @@ public class TaskEntity {
     @Column(columnDefinition = "jsonb")
     private List<Map<String, Object>> stepsLog; // История: [{"step": "ocr", "ms": 1200, "ver": "v2"}]
 
-    private String resultPathMd; // Ссылка на MD в MinIO
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "result_file_id")
+    private FileEntity resultFile; // Ссылка на результат, несжатыый tar в MinIO
 
     private Integer userRating; // 1-5 для "золотого сета"
 
@@ -46,9 +48,10 @@ public class TaskEntity {
     private LocalDateTime completedAt;
 
     // Вспомогательный метод для завершения задачи
-    public void markCompleted(String path) {
-        this.resultPathMd = path;
+    public void markCompleted(FileEntity resultFile) {
+        this.resultFile = resultFile;
         this.status = TaskStatus.COMPLETED;
         this.completedAt = LocalDateTime.now();
+        this.currentStage = "FINISHED";
     }
 }

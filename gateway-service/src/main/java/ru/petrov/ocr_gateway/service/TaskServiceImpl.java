@@ -40,7 +40,7 @@ public class TaskServiceImpl implements TaskService {
         // 2. Создаем таску в БД (Атомарный save() создаст свою мини-транзакцию)
         TaskEntity task = new TaskEntity();
         task.setTraceId(traceId);
-        task.setFile(fileEntity);
+        task.setSourceFile(fileEntity);
         task.setStatus(TaskStatus.PENDING);
         task.setConfig(options);
         TaskEntity savedTask = taskRepository.save(task);

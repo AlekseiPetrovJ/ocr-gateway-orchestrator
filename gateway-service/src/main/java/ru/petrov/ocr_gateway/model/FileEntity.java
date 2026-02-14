@@ -17,7 +17,8 @@ public class FileEntity {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    @Column(name = "storage_path", nullable = false)
+    //При удалении чистим ссылку на хранилище
+    @Column(name = "storage_path")
     private String storagePath;
 
     @NotBlank
@@ -30,7 +31,10 @@ public class FileEntity {
     @Column(name = "size_bytes", nullable = false)
     private Long sizeBytes;
 
+    @Column(name = "deleted_at")
+    private LocalDateTime deletedAt;
+
     @CreatedDate
-    @Column(name = "created_at", nullable = false)
+    @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 }

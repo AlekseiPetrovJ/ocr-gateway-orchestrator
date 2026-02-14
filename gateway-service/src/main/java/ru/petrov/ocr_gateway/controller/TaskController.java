@@ -32,7 +32,7 @@ public class TaskController {
         return ResponseEntity.ok(new TaskResponseDto(
                 task.getId(),
                 task.getStatus().name(),
-                task.getFile().getSha256Hash(),
+                task.getSourceFile().getSha256Hash(),
                 task.getCreatedAt()
         ));
     }

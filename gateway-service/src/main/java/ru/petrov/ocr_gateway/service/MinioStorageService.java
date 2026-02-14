@@ -110,4 +110,20 @@ public class MinioStorageService implements StorageService {
         }
         return objectName;
     }
+
+    @Override
+    public String getDownloadUrl(FileEntity file) {
+        log.warn("getDownloadUrl not implemented yet for file: {}", file.getSha256Hash());
+        return "http://stub-url/implement-me";
+    }
+
+    @Override
+    public InputStream getPartialStream(FileEntity file, long offset, long length) {
+        throw new UnsupportedOperationException("Partial stream not implemented yet");
+    }
+
+    @Override
+    public void deleteFileSafely(FileEntity file) {
+        log.info("Stub: deleteFileSafely requested for {}", file.getSha256Hash());
+    }
 }
