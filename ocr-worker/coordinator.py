@@ -27,6 +27,14 @@ def calculate_sha256(file_path):
             sha256_hash.update(byte_block)
     return sha256_hash.hexdigest()
 
+def _calculate_hash_from_stream(self, stream):
+    """Универсальный расчет SHA-256 из любого потока (MinIO или файл)"""
+    sha256_hash = hashlib.sha256()
+    # Читаем кусками по 4КБ, чтобы не забить оперативку
+    for byte_block in iter(lambda: stream.read(4096), b""):
+        sha256_hash.update(byte_block)
+    return sha256_hash.hexdigest()
+
 class Coordinator:
     def __init__(self, parser_instance: DoclingParser):
         """Инициализация синглтонов при старте контейнера"""
@@ -52,16 +60,18 @@ class Coordinator:
         self.channel.queue_declare(queue=settings.queue_output, durable=True)
         self.channel.basic_qos(prefetch_count=1)
 
-    def _send_response(self, task_id, status, extra=None):
+    def _send_response(self, task_id, status, storage_path, sha256, file_size, metadata):
         """Отправка тикета-ответа (Event) обратно в шину"""
         payload = {
-            "task_id": task_id,
+            "taskId": task_id,
             "status": status,
-            "worker_node": os.getenv("HOSTNAME", "node-1"),
-            "timestamp": int(time.time())
+            "storagePath": storage_path,
+            "sha256": sha256,
+            "fileSize": file_size,
+            "metadata": metadata or {} # Твой пакет артефактов
         }
-        if extra: payload.update(extra)
 
+        # Отправляем JSON строку
         self.channel.basic_publish(
             exchange='',
             routing_key=settings.queue_output,
@@ -145,12 +155,20 @@ class Coordinator:
             # Если результат уже в S3, не тратим ресурсы CPU/GPU
             result_filename = f"{task_id}.tar"
             try:
-                self.s3.stat_object(settings.bucket_proc, result_filename)
+                stat = self.s3.stat_object(settings.bucket_proc, result_filename)
                 logger.info(f"Результат {task_id} уже существует. Пропускаем OCR.")
+                file_size = stat.size
+                file_hash = stat.metadata.get('x-amz-meta-sha256')
+                # 3. Если хэша НЕТ (кто-то залил файл мимо системы) — считаем его один раз
+                # 2. Если в паспорте (метаданных) пусто — считаем вручную
+                if not file_hash:
+                    response = self.s3.get_object(settings.bucket_proc, result_filename)
+                    with response:
+                        file_hash = _calculate_hash_from_stream(response)
 
-                # В v2.x создаем спан и сразу закрываем его
+                # Создаем спан и сразу закрываем его
                 span = trace.span(name="idempotency_hit")
-                self._send_response(task_id, "SUCCESS", {"s3Output": result_filename})
+                self._send_response(task_id, "SUCCESS", result_filename, file_hash, file_size, {"hit": "s3_stat"})
                 span.end()
 
                 self.langfuse.flush() # Выталкиваем трейс перед выходом
@@ -184,25 +202,42 @@ class Coordinator:
 
             # 5. UPLOAD
             span_up = trace.span(name="io_s3_upload")
-            self.s3.fput_object(settings.bucket_proc, result_filename, str(tar_path))
+            self.s3.fput_object(
+                settings.bucket_proc,
+                result_filename,
+                str(tar_path),
+                metadata={"sha256": result_hash})
             span_up.end()
 
             # 6. RESPONSE
-            self._send_response(task_id, "SUCCESS", {
-                "s3Output": result_filename,
-                "sha256": result_hash
-            })
+            file_size = os.path.getsize(str(tar_path))
+            self._send_response(
+                task_id,
+                "SUCCESS",
+                result_filename,
+                result_hash,
+                file_size,
+                {}
+            )
 
             self.langfuse.flush() # Финальный сброс трейсов
             ch.basic_ack(delivery_tag=method.delivery_tag)
-            logger.info(f"✅ Задача {task_id} завершена успешно.")
+            logger.info(f"Задача {task_id} завершена успешно.")
 
         except Exception as e:
-            logger.error(f"❌ Ошибка задачи {task_id}: {str(e)}")
-            trace.update(status_message=str(e), level="ERROR")
+            error_msg = str(e)
+            logger.error(f"Ошибка задачи {task_id}: {error_msg}")
+            trace.update(status_message=error_msg, level="ERROR")
 
             # Сообщаем внешней системе об ошибке
-            self._send_response(task_id, "ERROR", {"error": str(e)})
+            self._send_response(
+                task_id,
+                "ERROR",
+                "",         # storagePath (файла нет)
+                "",         # sha256 (файла нет)
+                "",         # fileSize (файла нет)
+                {"error": error_msg, "step": "ocr_failed"} # Пакет артефактов в metadata
+            )
             self.langfuse.flush()
             # Отправляем в DLQ (requeue=False)
             ch.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
