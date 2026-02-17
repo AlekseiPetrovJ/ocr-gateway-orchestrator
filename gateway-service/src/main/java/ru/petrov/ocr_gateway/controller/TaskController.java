@@ -27,11 +27,11 @@ public class TaskController {
         // 1. Валидация (PDF/Image)
 
         // Прокидываем в сервис файл и мапу опций из DTO
-        TaskEntity task = taskService.createAndDispatch(file, request.options());
+        TaskEntity task = taskService.createAndDispatch(file, request.profile(), request.options());
 
         return ResponseEntity.ok(new TaskResponseDto(
                 task.getId(),
-                task.getStatus().name(),
+                task.getStatus(),
                 task.getSourceFile().getSha256Hash(),
                 task.getCreatedAt()
         ));

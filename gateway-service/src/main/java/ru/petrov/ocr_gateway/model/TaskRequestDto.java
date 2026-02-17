@@ -16,6 +16,6 @@ import java.util.Map;
  * @param options Карта дополнительных настроек для воркера (например, {"lang": "rus"}).
  */
 public record TaskRequestDto(
-        String profile,
+        ProcessingProfile profile,
         Map<String, Object> options // Для гибких настроек
 ) {}

@@ -5,13 +5,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 import ru.petrov.ocr_gateway.exception.TaskDispatchException;
-import ru.petrov.ocr_gateway.model.FileEntity;
-import ru.petrov.ocr_gateway.model.TaskEntity;
-import ru.petrov.ocr_gateway.model.TaskMessageDto;
-import ru.petrov.ocr_gateway.model.TaskStatus;
+import ru.petrov.ocr_gateway.model.*;
 import ru.petrov.ocr_gateway.repository.TaskRepository;
 
+import java.time.LocalDateTime;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 
 @Service
@@ -26,12 +25,43 @@ public class TaskServiceImpl implements TaskService {
     // TODO: Интегрировать систему профилей для заполнения дефолтных опций
 
     @Override
-    public TaskEntity createAndDispatch(MultipartFile file, Map<String, Object> options) {
-        String traceId = UUID.randomUUID().toString();
+    public TaskEntity createAndDispatch(MultipartFile file, ProcessingProfile profile, Map<String, Object> options) {
+        //Фиксируем время только для аналитики кэша
+        LocalDateTime requestStartTime = LocalDateTime.now();
+        //python worker хочет без дефисов
+        String traceId = UUID.randomUUID().toString().replace("-", "");
 
         // 1. Приземляем файл (IO-bound, вне транзакции)
         FileEntity fileEntity = storageService.uploadFile(file);
 
+        // Дедупликация задачи
+        Optional<TaskEntity> cache = findCompletedCache(fileEntity, profile);
+
+        if (cache.isPresent()) {
+            TaskEntity cached = cache.get();
+            log.info("Используем результат уже готовой задачи {}", cached.getId());
+
+            TaskEntity newTask = new TaskEntity();
+            newTask.setTraceId(traceId);
+            newTask.setSourceFile(fileEntity);
+            newTask.setProfile(profile);
+            newTask.setConfig(options);
+            newTask.setResultFile(cached.getResultFile());
+            newTask.setStepsLog(cached.getStepsLog());
+            newTask.markCompleted(cached.getResultFile());
+
+            newTask.setCreatedAt(requestStartTime);
+
+            tracer.startTaskTrace(traceId, "cache-hit:" + profile.getValue(), fileEntity.getSha256Hash());
+
+            // А теперь открываем и ТУТ ЖЕ закрываем Спан, чтобы данные улетели
+            try (var ignored = tracer.startSpan(traceId, "cache-deduplication")) {
+                // Тут пусто, мы просто зашли и вышли, чтобы сработал close()
+                log.debug("Tracing cache hit for {}", traceId);
+            }
+
+            return taskRepository.save(newTask);
+        }
         // Затем логируем в Langfuse
         try (var ignored = tracer.startSpan(traceId, "minio-upload")) {
             tracer.startTaskTrace(traceId, file.getOriginalFilename(), fileEntity.getSha256Hash());
@@ -41,6 +71,7 @@ public class TaskServiceImpl implements TaskService {
         TaskEntity task = new TaskEntity();
         task.setTraceId(traceId);
         task.setSourceFile(fileEntity);
+        task.setProfile(profile);
         task.setStatus(TaskStatus.PENDING);
         task.setConfig(options);
         TaskEntity savedTask = taskRepository.save(task);
@@ -51,6 +82,7 @@ public class TaskServiceImpl implements TaskService {
                 fileEntity.getStoragePath(),
                 traceId,
                 fileEntity.getSha256Hash(),
+                profile,
                 savedTask.getConfig()
         );
 
@@ -66,4 +98,9 @@ public class TaskServiceImpl implements TaskService {
         return savedTask;
     }
 
+    private Optional<TaskEntity> findCompletedCache(FileEntity file, ProcessingProfile profile) {
+        return taskRepository.findFirstBySourceFileAndProfileAndStatusOrderByCreatedAtDesc(
+                file, profile, TaskStatus.COMPLETED
+        );
+    }
 }

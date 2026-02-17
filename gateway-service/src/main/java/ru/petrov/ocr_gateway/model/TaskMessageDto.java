@@ -10,13 +10,14 @@ import java.util.Map;
  * @param storagePath Путь к исходному файлу в хранилище MinIO.
  * @param traceId     Сквозной идентификатор для мониторинга (Langfuse, OpenTelemetry).
  * @param sha256      Контрольная сумма исходного файла для верификации воркером перед обработкой.
- * @param config      Конфигурация задачи: профиль ("parse", "clean_parse" и т.д.)
- *                    и доп. опции (язык, параметры OCR).
+ * @param profile     Профиль ("parse", "clean_parse" и т.д.)
+ * @param config      Конфигурация задачи, опции (язык, параметры OCR).
  */
 public record TaskMessageDto(
         Long taskId,
         String storagePath,
         String traceId,
         String sha256,
+        ProcessingProfile profile,
         Map<String, Object> config
 ) {}

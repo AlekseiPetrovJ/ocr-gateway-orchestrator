@@ -1,7 +1,7 @@
 package ru.petrov.ocr_gateway.model;
 
 import jakarta.persistence.*;
-import lombok.Data;
+import lombok.*;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -11,7 +11,8 @@ import java.util.Map;
 
 @Entity
 @Table(name = "tasks")
-@Data
+@Getter
+@Setter
 public class TaskEntity {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -30,9 +31,13 @@ public class TaskEntity {
     @Column(name = "current_stage")
     private String currentStage; // NORMALIZE, OCR, etc.
 
+    @Enumerated(EnumType.STRING)
+    @Column(name = "profile", nullable = false)
+    private ProcessingProfile profile;
+
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")
-    private Map<String, Object> config; // Профиль: { "profile": "high_acc", "lang": "rus" }
+    private Map<String, Object> config;
 
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb")

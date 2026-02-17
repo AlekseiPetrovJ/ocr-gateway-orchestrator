@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
  */
 public record TaskResponseDto(
         Long taskId,
-        String status,
+        TaskStatus status,
         String fileHash,
         LocalDateTime createdAt
 ) {}

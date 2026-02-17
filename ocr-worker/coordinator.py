@@ -126,7 +126,7 @@ class Coordinator:
         trace_id = data.get('traceId')
         s3_path = data.get('storagePath')
         file_hash = data.get('sha256')
-        profile_str = data.get('config', {}).get('profile', 'parse')
+        profile_str = data.get('profile', 'parse')
         profile = ProcessingProfile(profile_str)
         # --- Observability Fail-Safe ---
         # Подключаемся к Root Trace из Java по trace_id.
