@@ -4,6 +4,7 @@ import com.langfuse.client.LangfuseClient;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.web.client.RestTemplate;
 
 @Configuration
 public class LangfuseConfig {
@@ -20,5 +21,10 @@ public class LangfuseConfig {
                 .url(host)
                 .credentials(publicKey, secretKey)
                 .build();
+    }
+
+    @Bean
+    public RestTemplate restTemplate() {
+        return new RestTemplate();
     }
 }

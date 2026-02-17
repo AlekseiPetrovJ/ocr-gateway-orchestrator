@@ -1,98 +1,83 @@
 package ru.petrov.ocr_gateway.service;
 
-import com.langfuse.client.LangfuseClient;
-import com.langfuse.client.resources.ingestion.requests.IngestionRequest;
-import com.langfuse.client.resources.ingestion.types.*;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestTemplate;
 
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.ZoneOffset;
-import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.UUID;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
-public class LangfuseTracer implements AppTracer{
+public class LangfuseTracer implements AppTracer {
+    private final RestTemplate restTemplate;
 
-    private final LangfuseClient langfuse;
+    @Value("${app.langfuse.public-key}")
+    private String publicKey;
 
+    @Value("${app.langfuse.secret-key}")
+    private String secretKey;
+
+    @Value("${app.langfuse.host}")
+    private String host;
+
+    @Async
     @Override
     public void startTaskTrace(String traceId, String fileName, String hash) {
-        try {
-            // Создаем Body с метаданными
-            TraceBody body = TraceBody.builder()
-                    .name("ocr-ingestion")
-                    .metadata(Optional.of(Map.of(
-                            "filename", fileName,
-                            "file_hash", hash
-                    )))
-                    .build();
-
-            // Оборачиваем в Event (с timestamp в String!)
-            TraceEvent traceEvent = TraceEvent.builder()
-                    .id(traceId)
-                    .timestamp(OffsetDateTime.now().toString())
-                    .body(body)
-                    .build();
-
-            // Финальный инжест
-            langfuse.ingestion().batch(IngestionRequest.builder()
-                    .batch(List.of(IngestionEvent.traceCreate(traceEvent)))
-                    .build());
-
-            log.info("Langfuse trace initialized: {}", traceId);
-        } catch (Exception e) {
-            log.error("Failed to send trace to Langfuse: {}", e.getMessage());
-        }
+        Map<String, Object> body = Map.of(
+                "id", traceId,
+                "name", "ocr-ingestion",
+                "metadata", Map.of("filename", fileName, "hash", hash)
+        );
+        sendRawEvent("trace-create", traceId, body);
     }
 
     @Override
     public AutoCloseableSpan startSpan(String traceId, String spanName) {
         return new AutoCloseableSpan(traceId, spanName, (data) -> {
-            try {
-                // 1. Собираем "тело" спана. Именно здесь привязываем к TraceID
-                OffsetDateTime startTime = Instant.ofEpochMilli(data.startMillis())
-                        .atOffset(ZoneOffset.UTC)
-                        .truncatedTo(ChronoUnit.MILLIS);
-
-                OffsetDateTime endTime = startTime.plus(data.duration(), ChronoUnit.MILLIS);
-
-                // 2. Собираем Body
-                CreateSpanBody body = CreateSpanBody.builder()
-                        .traceId(Optional.of(data.traceId())) // Явно оборачиваем!
-                        .name(Optional.of(data.spanName()))
-                        .startTime(startTime)
-                        .endTime(endTime)
-                        .build();
-
-// 2. Собираем Event (Конверт)
-                CreateSpanEvent event = CreateSpanEvent.builder()
-                        .id(UUID.randomUUID().toString())
-                        .timestamp(OffsetDateTime.now().toString())
-                        // Проверь, есть ли метод .traceId() прямо здесь у билдера Event
-                        // Если есть - обязательно добавь!
-                        .body(body)
-                        .build();                                      // _FinalStage
-
-                // 3. Отправляем
-                langfuse.ingestion().batch(IngestionRequest.builder()
-                        .batch(List.of(IngestionEvent.spanCreate(event)))
-                        .build());
-
-                log.info("📊 Span [{}] sent: {}ms", data.spanName(), data.duration());
-                log.info("TRACE_CHECK: TraceID={}, SpanName={}, Duration={}ms", data.traceId(), data.spanName(), data.duration());
-
-            } catch (Exception e) {
-                log.error("❌ Failed to send span to Langfuse: {}", e.getMessage());
-            }
+            Map<String, Object> body = Map.of(
+                    "id", UUID.randomUUID().toString().replace("-", ""),
+                    "traceId", data.traceId(),
+                    "name", data.spanName(),
+                    "startTime", Instant.ofEpochMilli(data.startMillis()).toString(),
+                    "endTime", Instant.ofEpochMilli(data.startMillis() + data.duration()).toString()
+            );
+            sendRawEvent("span-create", data.traceId(), body);
         });
     }
 
+    @Async
+    public void sendRawEvent(String type, String traceId, Object body) {
+        try {
+            Map<String, Object> event = Map.of(
+                    "id", UUID.randomUUID().toString().replace("-", ""),
+                    "type", type,
+                    "timestamp", Instant.now().toString(),
+                    "body", body
+            );
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setBasicAuth(publicKey, secretKey);
+            headers.setContentType(MediaType.APPLICATION_JSON);
+
+            HttpEntity<Map<String, Object>> request = new HttpEntity<>(
+                    Map.of("batch", List.of(event)),
+                    headers
+            );
+
+            restTemplate.postForEntity(host + "/api/public/ingestion", request, String.class);
+            log.info("✅ Event [{}] sent for trace: {}", type, traceId);
+        } catch (Exception e) {
+            log.error("❌ Failed to send event [{}]: {}", type, e.getMessage());
+        }
+    }
 }
