@@ -1,14 +1,17 @@
 package ru.petrov.ocr_gateway.service;
 
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import ru.petrov.ocr_gateway.exception.TaskDispatchException;
 import ru.petrov.ocr_gateway.model.*;
 import ru.petrov.ocr_gateway.repository.TaskRepository;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
@@ -102,5 +105,36 @@ public class TaskServiceImpl implements TaskService {
         return taskRepository.findFirstBySourceFileAndProfileAndStatusOrderByCreatedAtDesc(
                 file, profile, TaskStatus.COMPLETED
         );
+    }
+
+    @Override
+    @Transactional
+    public void completeTask(TaskResultMessageDto result) {
+        TaskEntity task = taskRepository.findByIdWithLock(result.taskId())
+                .orElseThrow(() -> new EntityNotFoundException());
+
+        // 2. Идемпотентность (если Rabbit прислал дубль)
+        if (task.getStatus() == TaskStatus.COMPLETED) {
+            log.warn("Задача {} уже была завершена ранее", task.getId());
+            return;
+        }
+
+        FileEntity resultFile = storageService.registerResult(
+                result.storagePath(),
+                result.sha256(),
+                result.fileSize()
+        );
+
+        task.setResultFile(resultFile);
+        task.setStatus(TaskStatus.COMPLETED);
+        task.setCompletedAt(LocalDateTime.now());
+
+        // Передаем метаданные от воркера (stepsLog)
+        if (result.metadata() != null) {
+            task.setStepsLog(List.of(result.metadata()));
+        }
+
+        taskRepository.save(task);
+        log.info("Задача {} финализирована. Привязан файл: {}", task.getId(), resultFile.getId());
     }
 }

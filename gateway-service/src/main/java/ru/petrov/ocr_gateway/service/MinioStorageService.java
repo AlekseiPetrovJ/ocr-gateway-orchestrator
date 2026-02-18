@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 import ru.petrov.ocr_gateway.model.FileEntity;
 import ru.petrov.ocr_gateway.repository.FileRepository;
@@ -109,6 +110,30 @@ public class MinioStorageService implements StorageService {
             );
         }
         return objectName;
+    }
+
+    @Override
+    @Transactional
+    public FileEntity registerResult(String storagePath, String sha256, Long fileSize) {
+        // ПРОВЕРКА ДЕДУПЛИКАЦИИ
+        // Ищем: вдруг такой результат (или идентичный файл) уже регистрировался
+        return fileRepository.findBySha256Hash(sha256)
+                .map(existingFile -> {
+                    log.info("Результат с хэшем {} уже в реестре. Переиспользуем ID {}", sha256, existingFile.getId());
+                    return existingFile;
+                })
+                .orElseGet(() -> {
+                    // 2. РЕГИСТРАЦИЯ НОВОГО
+                    // Если хэш уникальный — верим воркеру и создаем запись
+                    log.info("Регистрация нового файла-результата в БД: {}", sha256);
+                    FileEntity newFile = new FileEntity();
+                    newFile.setStoragePath(storagePath);
+                    newFile.setSha256Hash(sha256);
+                    newFile.setSizeBytes(fileSize);
+                    newFile.setMimeType("application/x-tar"); // Мы знаем, что воркер выдает архивы
+
+                    return fileRepository.save(newFile);
+                });
     }
 
     @Override

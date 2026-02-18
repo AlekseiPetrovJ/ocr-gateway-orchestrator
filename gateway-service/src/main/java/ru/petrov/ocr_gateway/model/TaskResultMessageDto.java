@@ -9,6 +9,7 @@ import java.util.Map;
  * @param taskId      ID задачи для мгновенного поиска и обновления в Postgres.
  * @param status      Результат обработки (SUCCESS, ERROR, FAILED).
  * @param storagePath Путь к результирующему TAR-архиву в бакете MinIO.
+ * @param traceId     Сквозной идентификатор для мониторинга (Langfuse, OpenTelemetry).
  * @param sha256      SHA-256 хеш архива для дедупликации и контроля целостности.
  * @param fileSize    Размер архива в байтах (необходим для логики Range Requests, скачивания частями).
  * @param metadata    Пакет дополнительных артефактов (версия движка и т.п.),
@@ -16,8 +17,9 @@ import java.util.Map;
  */
 public record TaskResultMessageDto(
         Long taskId,
-        String status,
+        TaskStatus status,
         String storagePath,
+        String traceId,
         String sha256,
         Long fileSize,
         Map<String, Object> metadata

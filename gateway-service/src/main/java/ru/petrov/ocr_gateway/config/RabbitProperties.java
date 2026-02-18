@@ -8,5 +8,8 @@ public record RabbitProperties(
         String routingKey,
         Queues queues
 ) {
-    public record Queues(String incoming) {}
+    public record Queues(
+            String incoming,
+            String results
+    ) {}
 }

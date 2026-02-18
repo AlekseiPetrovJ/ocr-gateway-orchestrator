@@ -1,6 +1,9 @@
 package ru.petrov.ocr_gateway.repository;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
 import ru.petrov.ocr_gateway.model.FileEntity;
 import ru.petrov.ocr_gateway.model.ProcessingProfile;
 import ru.petrov.ocr_gateway.model.TaskEntity;
@@ -14,4 +17,8 @@ public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
             ProcessingProfile profile,
             TaskStatus status
     );
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from TaskEntity t where t.id = :id")
+    Optional<TaskEntity> findByIdWithLock(Long id);
 }

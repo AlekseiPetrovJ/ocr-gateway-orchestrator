@@ -51,8 +51,23 @@ public class LangfuseTracer implements AppTracer {
                     "startTime", Instant.ofEpochMilli(data.startMillis()).toString(),
                     "endTime", Instant.ofEpochMilli(data.startMillis() + data.duration()).toString()
             );
+
             sendRawEvent("span-create", data.traceId(), body);
         });
+    }
+
+    @Override
+    @Async
+    public void sendError(String traceId, String name, String message) {
+        sendRawEvent("span-create", traceId, Map.of(
+                "id", UUID.randomUUID().toString().replace("-", ""),
+                "traceId", traceId,
+                "name", name,
+                "level", "ERROR", // Вот она, магия!
+                "statusMessage", message,
+                "startTime", Instant.now().toString(),
+                "endTime", Instant.now().toString()
+        ));
     }
 
     @Async
