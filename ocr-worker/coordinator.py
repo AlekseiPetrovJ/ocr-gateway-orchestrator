@@ -60,10 +60,11 @@ class Coordinator:
         self.channel.queue_declare(queue=settings.queue_output, durable=True)
         self.channel.basic_qos(prefetch_count=1)
 
-    def _send_response(self, task_id, status, storage_path, sha256, file_size, metadata):
+    def _send_response(self, task_id, trace_id, status, storage_path, sha256, file_size, metadata):
         """Отправка тикета-ответа (Event) обратно в шину"""
         payload = {
             "taskId": task_id,
+            "traceId": trace_id,
             "status": status,
             "storagePath": storage_path,
             "sha256": sha256,
@@ -213,7 +214,8 @@ class Coordinator:
             file_size = os.path.getsize(str(tar_path))
             self._send_response(
                 task_id,
-                "SUCCESS",
+                trace_id,
+                "COMPLETED",
                 result_filename,
                 result_hash,
                 file_size,

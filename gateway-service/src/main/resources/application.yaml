@@ -18,6 +18,11 @@ spring:
   rabbitmq:
     host: localhost
     port: 5672
+    listener:
+      simple:
+        concurrency: 2
+        max-concurrency: 5
+        prefetch: 1
     username: ${RABBITMQ_USER}
     password: ${RABBITMQ_PASS}
 
@@ -46,6 +51,7 @@ app:
     routing-key: ocr.key
     queues:
       incoming: ocr.tasks.queue
+      results: ocr.results.queue
   langfuse:
     host: http://localhost:3000
     public-key: ${LANGFUSE_PK}
