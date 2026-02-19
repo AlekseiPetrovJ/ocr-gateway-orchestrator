@@ -1,9 +1,7 @@
 package ru.petrov.ocr_gateway.service;
 
-import io.minio.BucketExistsArgs;
-import io.minio.MakeBucketArgs;
-import io.minio.MinioClient;
-import io.minio.PutObjectArgs;
+import io.minio.*;
+import io.minio.http.Method;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +23,7 @@ import java.security.MessageDigest;
 import java.time.LocalDate;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @Service
 @RequiredArgsConstructor
@@ -33,15 +32,33 @@ public class MinioStorageService implements StorageService {
     private final MinioClient minioClient;
     private final FileRepository fileRepository;
 
-    @Value("${app.minio.bucket}")
-    private String bucket;
+    @Value("${app.minio.bucket-raw}")
+    private String bucketRaw;
+
+    @Value("${app.minio.bucket-proc}")
+    private String bucketProc;
+
+    @Value("${app.minio.expiry-min:15}") // Если в конфиге пусто, будет 15 минут
+    private int expiryMin;
 
     @PostConstruct
     public void init() throws Exception {
-        // Создаем бакет при старте, если его нет
-        boolean found = minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build());
+        ensureBucketExists(bucketRaw);
+        ensureBucketExists(bucketProc);
+    }
+
+    private void ensureBucketExists(String bucketName) throws Exception {
+        boolean found = minioClient.bucketExists(
+                BucketExistsArgs.builder().bucket(bucketName).build()
+        );
+
         if (!found) {
-            minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
+            log.info("Инициализация хранилища: создание бакета [{}]", bucketName);
+            minioClient.makeBucket(
+                    MakeBucketArgs.builder().bucket(bucketName).build()
+            );
+        } else {
+            log.debug("Бакет [{}] уже существует", bucketName);
         }
     }
 
@@ -49,11 +66,11 @@ public class MinioStorageService implements StorageService {
     public FileEntity uploadFile(MultipartFile file) {
         Path tempFile = null;
         try {
-            // 1. Создаем временный файл
+            // Создаем временный файл
             tempFile = Files.createTempFile("ocr_ingest_", ".tmp");
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
 
-            // 2. ОДИН ПРОХОД: Пишем на диск + Считаем хеш
+            // ОДИН ПРОХОД: Пишем на диск + Считаем хеш
             try (InputStream is = file.getInputStream();
                  OutputStream os = Files.newOutputStream(tempFile);
                  DigestInputStream dis = new DigestInputStream(is, digest)) {
@@ -62,16 +79,16 @@ public class MinioStorageService implements StorageService {
 
             String hash = Hex.encodeHexString(digest.digest());
 
-            // 3. ДЕДУПЛИКАЦИЯ: Ищем в БД
+            // ДЕДУПЛИКАЦИЯ: Ищем в БД
             Optional<FileEntity> existing = fileRepository.findBySha256Hash(hash);
             if (existing.isPresent()) {
                 return existing.get();
             }
 
-            // 2. Льем в MinIO (длинная сеть вне транзакции)
+            // Льем в MinIO (длинная сеть вне транзакции)
             String path = uploadToMinio(file, hash, tempFile);
 
-            // 3. Сохраняем в БД (короткий INSERT, транзакция внутри .save())
+            // Сохраняем в БД (короткий INSERT, транзакция внутри .save())
             FileEntity entity = new FileEntity();
             entity.setSha256Hash(hash);
             entity.setStoragePath(path);
@@ -100,7 +117,7 @@ public class MinioStorageService implements StorageService {
         try (InputStream is = Files.newInputStream(tempFile)) {
             minioClient.putObject(
                     PutObjectArgs.builder()
-                            .bucket(bucket)
+                            .bucket(bucketRaw)
                             .object(objectName)
                             .stream(is, file.getSize(), -1)
                             .contentType(file.getContentType())
@@ -123,7 +140,7 @@ public class MinioStorageService implements StorageService {
                     return existingFile;
                 })
                 .orElseGet(() -> {
-                    // 2. РЕГИСТРАЦИЯ НОВОГО
+                    // РЕГИСТРАЦИЯ НОВОГО
                     // Если хэш уникальный — верим воркеру и создаем запись
                     log.info("Регистрация нового файла-результата в БД: {}", sha256);
                     FileEntity newFile = new FileEntity();
@@ -137,9 +154,24 @@ public class MinioStorageService implements StorageService {
     }
 
     @Override
-    public String getDownloadUrl(FileEntity file) {
-        log.warn("getDownloadUrl not implemented yet for file: {}", file.getSha256Hash());
-        return "http://stub-url/implement-me";
+    public String getDownloadUrl(FileEntity file, boolean isResult) {
+        String targetBucket = isResult ? bucketProc : bucketRaw;
+        try {
+            // Генерируем Presigned URL
+            // Ссылка будет содержать временную подпись доступа к конкретному объекту
+            return minioClient.getPresignedObjectUrl(
+                    GetPresignedObjectUrlArgs.builder()
+                            .method(Method.GET)
+                            .bucket(targetBucket)
+                            .object(file.getStoragePath())
+                            .expiry(expiryMin, TimeUnit.MINUTES)
+                            .build()
+            );
+        } catch (Exception e) {
+            log.error("Ошибка MinIO [Bucket: {}]: файл={}, причина={}",
+                    targetBucket, file.getSha256Hash(), e.getMessage());
+            throw new RuntimeException("Storage failure during URL generation", e);
+        }
     }
 
     @Override

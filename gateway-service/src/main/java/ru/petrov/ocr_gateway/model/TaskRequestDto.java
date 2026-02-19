@@ -1,5 +1,7 @@
 package ru.petrov.ocr_gateway.model;
 
+import jakarta.validation.constraints.NotNull;
+
 import java.util.Map;
 
 /**
@@ -16,6 +18,7 @@ import java.util.Map;
  * @param options Карта дополнительных настроек для воркера (например, {"lang": "rus"}).
  */
 public record TaskRequestDto(
+        @NotNull(message = "Необходимо указать профиль обработки (например, parse)")
         ProcessingProfile profile,
         Map<String, Object> options // Для гибких настроек
 ) {}

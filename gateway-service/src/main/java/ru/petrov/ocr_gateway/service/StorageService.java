@@ -29,18 +29,13 @@ public interface StorageService {
     void deleteFileSafely(FileEntity file);
 
     /**
-     * Генерация временной ссылки (Presigned URL) для прямого скачивания.
-     * <p>
-     * Метод создает подписанный URL, который позволяет клиенту забирать
-     * файл напрямую из хранилища (MinIO/Nginx) в обход ресурсов Ядра.
-     * <p>
-     * Ссылка имеет ограниченный срок жизни (TTL), что предотвращает
-     * несанкционированный доступ при перехвате URL.
+     * Генерация временной ссылки (Presigned URL).
      *
-     * @param file сущность файла из реестра, для которого генерируется доступ
-     * @return строка с полным URL и криптографической подписью доступа
+     * @param file     сущность файла
+     * @param isResult true, если файл из бакета результатов, false - из исходников
+     * @return подписанный URL
      */
-    String getDownloadUrl(FileEntity file);
+    String getDownloadUrl(FileEntity file, boolean isResult);
 
     /**
      * Чтение части байтов (Range Request).

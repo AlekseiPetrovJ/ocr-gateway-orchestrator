@@ -137,4 +137,47 @@ public class TaskServiceImpl implements TaskService {
         taskRepository.save(task);
         log.info("Задача {} финализирована. Привязан файл: {}", task.getId(), resultFile.getId());
     }
+
+    @Override
+    @Transactional(readOnly = true)
+    public TaskStatusResponseDto getTaskStatus(Long taskId) {
+        TaskEntity task = findTaskById(taskId);
+
+        if (task.getStatus() != TaskStatus.COMPLETED) {
+            return new TaskStatusResponseDto(task.getId(), task.getStatus(), task.getCurrentStage(), null, null);
+        }
+
+        FileEntity file = ensureResultReady(task);
+
+        return new TaskStatusResponseDto(
+                task.getId(), task.getStatus(), task.getCurrentStage(),
+                file.getSizeBytes(), file.getSha256Hash()
+        );
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public String getResultDownloadUrl(Long taskId) {
+        TaskEntity task = findTaskById(taskId);
+        FileEntity file = ensureResultReady(task);
+        log.info("Выдача доступа к результату задачи {}", taskId);
+        return storageService.getDownloadUrl(file, true);
+    }
+
+    private FileEntity ensureResultReady(TaskEntity task) {
+        if (task.getStatus() != TaskStatus.COMPLETED) {
+            throw new IllegalStateException("Результат еще не готов. Текущий статус: " + task.getStatus());
+        }
+
+        FileEntity resultFile = task.getResultFile();
+        if (resultFile == null) {
+            throw new IllegalStateException("Критическая ошибка целостности: статус COMPLETED, но файл не привязан. TaskID: " + task.getId());
+        }
+        return resultFile;
+    }
+
+    private TaskEntity findTaskById(Long taskId) {
+        return taskRepository.findById(taskId)
+                .orElseThrow(() -> new EntityNotFoundException("Задача с ID " + taskId + " не найдена"));
+    }
 }

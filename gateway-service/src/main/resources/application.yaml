@@ -45,7 +45,9 @@ app:
     endpoint: http://localhost:9005
     access-key: admin
     secret-key: ${MINIO_ROOT_PASSWORD}
-    bucket: ocr-artifacts
+    bucket-raw: ocr-artifacts
+    bucket-proc: ocr-processed
+    expiry-min: 15
   rabbitmq:
     exchange: ocr.exchange
     routing-key: ocr.key
@@ -56,7 +58,10 @@ app:
     host: http://localhost:3000
     public-key: ${LANGFUSE_PK}
     secret-key: ${LANGFUSE_SK}
-
+  upload:
+    max-size: 20MB
+#    allowed-types: application/pdf,image/jpeg,image/png
+    allowed-types: application/pdf
 # --- Actuator/Healthcheck Configuration ---
 management:
   endpoints:
