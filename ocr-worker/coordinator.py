@@ -234,6 +234,7 @@ class Coordinator:
             # Сообщаем внешней системе об ошибке
             self._send_response(
                 task_id,
+                trace_id,
                 "ERROR",
                 "",         # storagePath (файла нет)
                 "",         # sha256 (файла нет)
