@@ -28,6 +28,6 @@ class Settings:
     queue_output = "ocr.results.queue"
     bucket_raw = "ocr-artifacts"
     bucket_proc = "ocr-processed"
-    rmq_heartbeat = 60
+    rmq_heartbeat = 3600
 
 settings = Settings()

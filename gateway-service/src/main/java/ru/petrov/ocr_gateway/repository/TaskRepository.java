@@ -9,16 +9,25 @@ import ru.petrov.ocr_gateway.model.ProcessingProfile;
 import ru.petrov.ocr_gateway.model.TaskEntity;
 import ru.petrov.ocr_gateway.model.TaskStatus;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.Optional;
 
 public interface TaskRepository extends JpaRepository<TaskEntity, Long> {
-    Optional<TaskEntity> findFirstBySourceFileAndProfileAndStatusOrderByCreatedAtDesc(
+    Optional<TaskEntity> findFirstBySourceFileAndProfileAndStatusInOrderByIdDesc(
             FileEntity sourceFile,
             ProcessingProfile profile,
-            TaskStatus status
+            Collection<TaskStatus> statuses
     );
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("select t from TaskEntity t where t.id = :id")
     Optional<TaskEntity> findByIdWithLock(Long id);
+
+    List<TaskEntity> findAllBySourceFileAndProfileAndStatusInAndIdNot(
+            FileEntity sourceFile,
+            ProcessingProfile profile,
+            Collection<TaskStatus> statuses,
+            Long pioneerId
+    );
 }

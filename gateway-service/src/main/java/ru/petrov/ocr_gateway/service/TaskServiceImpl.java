@@ -34,11 +34,11 @@ public class TaskServiceImpl implements TaskService {
         //python worker хочет без дефисов
         String traceId = UUID.randomUUID().toString().replace("-", "");
 
-        // 1. Приземляем файл (IO-bound, вне транзакции)
+        // Приземляем файл (IO-bound, вне транзакции)
         FileEntity fileEntity = storageService.uploadFile(file);
 
         // Дедупликация задачи
-        Optional<TaskEntity> cache = findCompletedCache(fileEntity, profile);
+        Optional<TaskEntity> cache = findCache(fileEntity, profile, List.of(TaskStatus.COMPLETED));
 
         if (cache.isPresent()) {
             TaskEntity cached = cache.get();
@@ -65,12 +65,35 @@ public class TaskServiceImpl implements TaskService {
 
             return taskRepository.save(newTask);
         }
+
+        // Умное ожидание: ищем тех, кто уже в процессе обработки
+        Optional<TaskEntity> activeTask = findCache(fileEntity, profile, List.of(TaskStatus.PENDING, TaskStatus.PROCESSING));
+
+        if (activeTask.isPresent()) {
+            TaskEntity active = activeTask.get();
+            log.info("Присоседились к активной задаче {}. Ждем завершения.", active.getId());
+
+            TaskEntity newTask = new TaskEntity();
+            newTask.setTraceId(traceId);
+            newTask.setSourceFile(fileEntity);
+            newTask.setProfile(profile);
+            newTask.setConfig(options);
+            newTask.setCreatedAt(requestStartTime);
+
+            newTask.setStatus(active.getStatus());
+
+            tracer.startTaskTrace(traceId, "active-wait:" + profile.getValue(), fileEntity.getSha256Hash());
+
+            // В RabbitMQ НЕ ШЛЕМ! Просто сохраняем в базу.
+            return taskRepository.save(newTask);
+        }
+
         // Затем логируем в Langfuse
         try (var ignored = tracer.startSpan(traceId, "minio-upload")) {
             tracer.startTaskTrace(traceId, file.getOriginalFilename(), fileEntity.getSha256Hash());
         }
 
-        // 2. Создаем таску в БД (Атомарный save() создаст свою мини-транзакцию)
+        // Создаем таску в БД (Атомарный save() создаст свою мини-транзакцию)
         TaskEntity task = new TaskEntity();
         task.setTraceId(traceId);
         task.setSourceFile(fileEntity);
@@ -79,7 +102,7 @@ public class TaskServiceImpl implements TaskService {
         task.setConfig(options);
         TaskEntity savedTask = taskRepository.save(task);
 
-        // 3. Формирование DTO
+        // Формирование DTO
         TaskMessageDto message = new TaskMessageDto(
                 savedTask.getId(),
                 fileEntity.getStoragePath(),
@@ -89,7 +112,7 @@ public class TaskServiceImpl implements TaskService {
                 savedTask.getConfig()
         );
 
-        // 4. Отправка (Ретраи работают внутри этого вызова)
+        // Отправка (Ретраи работают внутри этого вызова)
         try {
             taskPublisher.publish(message);
         } catch (Exception e) {
@@ -101,21 +124,19 @@ public class TaskServiceImpl implements TaskService {
         return savedTask;
     }
 
-    private Optional<TaskEntity> findCompletedCache(FileEntity file, ProcessingProfile profile) {
-        return taskRepository.findFirstBySourceFileAndProfileAndStatusOrderByCreatedAtDesc(
-                file, profile, TaskStatus.COMPLETED
-        );
+    private Optional<TaskEntity> findCache(FileEntity file, ProcessingProfile profile, List<TaskStatus> statuses) {
+        return taskRepository.findFirstBySourceFileAndProfileAndStatusInOrderByIdDesc(file, profile, statuses);
     }
 
     @Override
     @Transactional
     public void completeTask(TaskResultMessageDto result) {
-        TaskEntity task = taskRepository.findByIdWithLock(result.taskId())
-                .orElseThrow(() -> new EntityNotFoundException());
+        TaskEntity pioneer = taskRepository.findByIdWithLock(result.taskId())
+                .orElseThrow(() -> new EntityNotFoundException("Pioneer task not found: " + result.taskId()));
 
-        // 2. Идемпотентность (если Rabbit прислал дубль)
-        if (task.getStatus() == TaskStatus.COMPLETED) {
-            log.warn("Задача {} уже была завершена ранее", task.getId());
+        // Идемпотентность (если Rabbit прислал дубль)
+        if (pioneer.getStatus() == TaskStatus.COMPLETED) {
+            log.warn("Задача {} уже была завершена ранее", pioneer.getId());
             return;
         }
 
@@ -125,17 +146,41 @@ public class TaskServiceImpl implements TaskService {
                 result.fileSize()
         );
 
-        task.setResultFile(resultFile);
-        task.setStatus(TaskStatus.COMPLETED);
-        task.setCompletedAt(LocalDateTime.now());
+        pioneer.setResultFile(resultFile);
+        pioneer.setStatus(TaskStatus.COMPLETED);
+        pioneer.setCompletedAt(LocalDateTime.now());
 
         // Передаем метаданные от воркера (stepsLog)
         if (result.metadata() != null) {
-            task.setStepsLog(List.of(result.metadata()));
+            pioneer.setStepsLog(List.of(result.metadata()));
         }
 
-        taskRepository.save(task);
-        log.info("Задача {} финализирована. Привязан файл: {}", task.getId(), resultFile.getId());
+        taskRepository.save(pioneer);
+        // Ищем всех, кто присоседился к этому хэшу и профилю
+        List<TaskEntity> followers = taskRepository.findAllBySourceFileAndProfileAndStatusInAndIdNot(
+                pioneer.getSourceFile(),
+                pioneer.getProfile(),
+                List.of(TaskStatus.PENDING, TaskStatus.PROCESSING),
+                pioneer.getId() // Кроме самого лидера
+        );
+
+        if (!followers.isEmpty()) {
+            log.info("Коллективный финиш: закрываем еще {} задач для файла {}",
+                    followers.size(), pioneer.getSourceFile().getSha256Hash());
+
+            followers.forEach(follower -> {
+                follower.setResultFile(resultFile);
+                follower.setStatus(TaskStatus.COMPLETED);
+                follower.setCompletedAt(LocalDateTime.now());
+                if (result.metadata() != null) {
+                    follower.setStepsLog(List.of(result.metadata()));
+                }
+            });
+            taskRepository.saveAll(followers);
+        }
+
+        log.info("Всего задач финализировано: {}. Привязан файл: {}",
+                followers.size() + 1, resultFile.getId());
     }
 
     @Override

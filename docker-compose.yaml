@@ -41,6 +41,7 @@ services:
     image: rabbitmq:3.12-management
     container_name: ocr_gateway_mq
     hostname: rabbitmq-node
+    restart: always
     ports:
       - "5672:5672"   # AMQP
       - "15672:15672" # Management UI

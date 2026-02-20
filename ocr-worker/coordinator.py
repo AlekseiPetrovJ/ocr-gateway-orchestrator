@@ -237,10 +237,10 @@ class Coordinator:
                 task_id,
                 trace_id,
                 "ERROR",
-                "",         # storagePath (файла нет)
-                "",         # sha256 (файла нет)
-                "",         # fileSize (файла нет)
-                {"error": error_msg, "step": "ocr_failed"} # Пакет артефактов в metadata
+                "FAILED",
+                "ERROR_HASH",
+                0,
+                {"error": error_msg}
             )
             self.langfuse.flush()
             # Отправляем в DLQ (requeue=False)
