@@ -204,9 +204,10 @@ class Coordinator:
             # 5. UPLOAD
             span_up = trace.span(name="io_s3_upload")
             self.s3.fput_object(
-                settings.bucket_proc,
-                result_filename,
-                str(tar_path),
+                bucket_name=settings.bucket_proc,
+                object_name=result_filename,
+                file_path=str(tar_path),
+                content_type="application/x-tar",
                 metadata={"sha256": result_hash})
             span_up.end()
 
