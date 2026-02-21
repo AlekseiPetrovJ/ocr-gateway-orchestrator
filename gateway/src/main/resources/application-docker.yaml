@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    url: jdbc:postgresql://db:5432/ocr_gateway
+  rabbitmq:
+    host: rabbitmq
+  data:
+    redis:
+      host: redis
+
+app:
+  minio:
+    endpoint: http://minio:9000
+  langfuse:
+    host: http://langfuse-web:3000

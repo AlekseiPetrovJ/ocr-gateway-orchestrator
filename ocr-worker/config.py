@@ -4,9 +4,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 class Settings:
-    rabbit_host = os.getenv("RABBIT_HOST", "localhost")
+    rabbit_host = os.getenv("RABBIT_HOST", "rabbitmq")
     rabbit_port = os.getenv("RABBIT_PORT", "5672")
-    s3_endpoint = os.getenv("MINIO_URL", "localhost:9005")
+    s3_endpoint = os.getenv("MINIO_URL", "minio:9005")
 
     rabbit_user = os.getenv("RABBIT_USER")
     rabbit_pass = os.getenv("RABBIT_PASS")
@@ -16,7 +16,7 @@ class Settings:
     # Мониторинг Langfuse
     lf_public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
     lf_secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-    lf_host       = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
+    lf_host       = os.getenv("LANGFUSE_HOST", "https://langfuse-web:3000")
 
 
     @property

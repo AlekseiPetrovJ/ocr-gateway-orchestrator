@@ -11,6 +11,9 @@ from minio import Minio
 from langfuse import Langfuse
 from unittest.mock import MagicMock
 
+from urllib3.exceptions import MaxRetryError, NewConnectionError
+from socket import timeout as TimeoutError
+
 from docling_parser import DoclingParser
 from preprocessor import run_cleanup, run_normalization
 from processing_profile import ProcessingProfile
@@ -133,13 +136,15 @@ class Coordinator:
         # Подключаемся к Root Trace из Java по trace_id.
         # ВНИМАНИЕ: Ошибки мониторинга не должны останавливать конвейер (Fail-Safe).
         try:
-            # Проверяем наличие метода trace, чтобы не упасть при плохой авторизации
-            if hasattr(self.langfuse, 'trace'):
-                trace = self.langfuse.trace(id=trace_id, name=f"WorkerProcess:{profile.value}")
-            else:
-                trace = MagicMock()
+            # Если метода нет или SDK не готов — упадем в except
+            trace = self.langfuse.trace(id=trace_id, name=f"WorkerProcess:{profile.value}")
+            self.langfuse.flush()
+
+            logger.info(f"[LF] Стык с TraceId {trace_id} прошел успешно")
+
         except Exception as e:
-            logger.warning(f"Langfuse failed: {e}")
+            logger.warning(f"[LF] SDK недоступен ({e}), работаю без мониторинга")
+            from unittest.mock import MagicMock
             trace = MagicMock()
 
         # Контекст файловой системы для задачи
@@ -156,6 +161,9 @@ class Coordinator:
             # Если результат уже в S3, не тратим ресурсы CPU/GPU
             result_filename = f"{task_id}.tar"
             try:
+                span_s3 = trace.span(name="io_s3_check_and_download")
+                self.langfuse.flush()
+
                 stat = self.s3.stat_object(settings.bucket_proc, result_filename)
                 logger.info(f"Результат {task_id} уже существует. Пропускаем OCR.")
                 file_size = stat.size
@@ -226,6 +234,12 @@ class Coordinator:
             self.langfuse.flush() # Финальный сброс трейсов
             ch.basic_ack(delivery_tag=method.delivery_tag)
             logger.info(f"Задача {task_id} завершена успешно.")
+
+        except (ConnectionError, TimeoutError, MaxRetryError, NewConnectionError) as e:
+            error_msg = f"Инфраструктурная задержка (MinIO/Network): {str(e)}"
+            logger.error(f"Что то с сетью пошло не так! Задача {task_id} возвращается в очередь: {error_msg}")
+            ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
 
         except Exception as e:
             error_msg = str(e)

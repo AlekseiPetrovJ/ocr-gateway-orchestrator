@@ -13,8 +13,10 @@ RUN ln -s /usr/bin/python3 /usr/bin/python
 WORKDIR /app
 
 # 3. ОПТИМИЗАЦИЯ: Ставим Torch отдельно (забетонировали слой на 2Гб)
-RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cu121
-
+RUN pip install --no-cache-dir \
+    torch==2.10.0 \
+    torchvision==0.25.0 \
+    --extra-index-url https://download.pytorch.org
 
 # 4. Остальные библиотеки
 COPY requirements.txt .
@@ -31,4 +33,6 @@ COPY . .
 EXPOSE 8000
 
 # Запускаем Веб-интерфейс
-CMD ["python", "web_api.py"]
+# CMD ["python", "web_api.py"]
+# Запускаем координатор-воркер
+CMD ["python", "coordinator.py"]

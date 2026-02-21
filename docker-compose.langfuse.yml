@@ -12,6 +12,8 @@ services:
     image: langfuse/langfuse-worker:3.150.0
     container_name: langfuse_worker
     restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
     depends_on:
       langfuse-db: { condition: service_healthy }
       clickhouse: { condition: service_healthy }
@@ -61,6 +63,8 @@ services:
     image: langfuse/langfuse:3.150.0
     container_name: langfuse_web
     restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
     ports:
       - "3000:3000"
     depends_on:

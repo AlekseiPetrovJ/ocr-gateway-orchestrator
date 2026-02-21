@@ -79,6 +79,62 @@ services:
     networks:
       - ocr-network
 
+  ocr-worker-gpu:
+    build: ./ocr-worker
+    image: my-ocr-registry/ocr-worker:latest
+#    пока нет вм с gpu, ставлю без перезапуска
+    restart: no
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - ocr-network
+    env_file:
+      - ./ocr-worker/.env
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [ gpu ]
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      minio:
+        condition: service_healthy
+
+  ocr-worker-cpu:
+    build: ./ocr-worker
+    image: my-ocr-registry/ocr-worker:latest
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    networks:
+      - ocr-network
+    env_file:
+      - ./ocr-worker/.env
+    depends_on:
+      rabbitmq:
+        condition: service_started
+      minio:
+        condition: service_healthy
+
+  gateway:
+    build: ./gateway
+    container_name: gateway
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+    ports:
+      - "8080:8080"
+    environment:
+      - SPRING_PROFILES_ACTIVE=local,docker
+    networks:
+      - ocr-network
+    depends_on:
+      db: { condition: service_healthy }
+      rabbitmq: { condition: service_started }
+      minio: { condition: service_healthy }
+
 volumes:
   pgdata:
   rabbitdata:
