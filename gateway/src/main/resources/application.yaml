@@ -27,10 +27,10 @@ spring:
     password: ${RABBITMQ_PASS}
 
   # --- Redis Configuration ---
-  data:
-    redis:
-      host: localhost
-      port: 6379
+#  data:
+#    redis:
+#      host: localhost
+#      port: 6379
       # Пароль в композе не задан, эту строку можно оставить пустой или удалить
       # password: your_redis_password
   # Лимит на один файл (ставим 50 Мб)
@@ -43,7 +43,6 @@ spring:
 app:
   minio:
     endpoint: http://localhost:9005
-    external-url: ${MINIO_EXTERNAL_URL:http://localhost:9005}
     access-key: admin
     secret-key: ${MINIO_ROOT_PASSWORD}
     bucket-raw: ocr-artifacts

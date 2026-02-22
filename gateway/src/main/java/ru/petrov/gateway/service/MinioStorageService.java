@@ -41,11 +41,6 @@ public class MinioStorageService implements StorageService {
     @Value("${app.minio.expiry-min:15}") // Если в конфиге пусто, будет 15 минут
     private int expiryMin;
 
-    @Value("${app.minio.external-url:http://localhost:9005}")
-    private String externalUrl;
-
-    @Value("${app.minio.endpoint}")
-    private String internalEndpoint;
 
     @PostConstruct
     public void init() throws Exception {
@@ -165,7 +160,7 @@ public class MinioStorageService implements StorageService {
         try {
             // Генерируем Presigned URL
             // Ссылка будет содержать временную подпись доступа к конкретному объекту
-            String presignedUrl = minioClient.getPresignedObjectUrl(
+            return minioClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
                             .method(Method.GET)
                             .bucket(targetBucket)
@@ -173,12 +168,6 @@ public class MinioStorageService implements StorageService {
                             .expiry(expiryMin, TimeUnit.MINUTES)
                             .build()
             );
-
-
-            // Заменяем внутренний адрес контейнера (minio:9000) на внешний (localhost:9005).
-            // Это позволяет браузеру на хосте скачать файл, в то время как Java-ядро
-            // продолжает работать с MinIO по скоростной внутренней сети Docker.
-            return presignedUrl.replace(internalEndpoint, externalUrl);
         } catch (Exception e) {
             log.error("Ошибка MinIO [Bucket: {}]: файл={}, причина={}",
                     targetBucket, file.getSha256Hash(), e.getMessage());
