@@ -1,0 +1,23 @@
+# Секреты и инфраструктура
+.env
+.tools/
+venv/
+.ai-tools/
+.aider.chat.history.md
+.aider.conf.yml
+
+# Мусор сборки Java
+target/
+*.class
+*.jar
+.idea/
+.mvn/
+*.log
+
+# Данные и сканы
+demo_files/
+input/
+output/
+pdf-tools/
+*.pdf
+*.tar
