@@ -80,11 +80,13 @@ services:
     restart: no
     volumes:
       - /etc/localtime:/etc/localtime:ro
+      - ./full_offline_cache:/root/.cache:ro
     networks:
       - ocr-network
     env_file:
       - ./ocr-worker/.env
     deploy:
+      replicas: 1
       resources:
         reservations:
           devices:
@@ -103,10 +105,13 @@ services:
     restart: always
     volumes:
       - /etc/localtime:/etc/localtime:ro
+      - ./full_offline_cache:/root/.cache:ro
     networks:
       - ocr-network
     env_file:
       - ./ocr-worker/.env
+    deploy:
+      replicas: 1
     depends_on:
       rabbitmq:
         condition: service_started

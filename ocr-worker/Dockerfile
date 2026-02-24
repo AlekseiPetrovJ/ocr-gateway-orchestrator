@@ -23,7 +23,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 5. ПРОГРЕВ (Вшиваем модели, чтобы работало без интернета)
-RUN python -c "from docling.document_converter import DocumentConverter; DocumentConverter()"
+# RUN python -c "from docling.document_converter import DocumentConverter; DocumentConverter()"
+# 5. ПРОГРЕВ (Вшиваем модели через родной downloader)
+RUN python3 -c "from docling.utils.model_downloader import download_models; download_models()"
 RUN python -c "import easyocr; easyocr.Reader(['ru', 'en'])"
 
 # 6. Копируем всё скрипты
